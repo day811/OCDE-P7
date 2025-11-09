@@ -1,7 +1,7 @@
 #.gitignore
 sources/
 local_*
-bc_after_eda*
+listings_Paris+(1)*
 
 
 # Byte-compiled / optimized / DLL files

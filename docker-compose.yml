@@ -1,0 +1,20 @@
+#docker-compose.yml
+services:
+  mongo:
+    image: mongo:latest
+    container_name: ${MONGO_HOST}
+    networks:
+      - noscites-net
+    ports:
+      - "${MONGO_PORT}:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      MONGO_DB_NAME: ${MONGO_DB_NAME}                
+    volumes:
+      - mongo_data:/data/db
+volumes:
+  mongo_data: {}
+networks:
+  noscites-net:
+    driver: bridge
