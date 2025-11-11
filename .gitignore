@@ -1,7 +1,7 @@
 #.gitignore
 sources/
 local_*
-listings_Paris+(1)*
+listings*(1)*
 
 
 # Byte-compiled / optimized / DLL files
