@@ -2,6 +2,8 @@
 sources/
 local_*
 listings*(1)*
+mongodb-keyfile
+*paris.sh
 
 
 # Byte-compiled / optimized / DLL files
