@@ -1,0 +1,97 @@
+
+networks:
+  noscites-network:
+    driver: bridge
+
+volumes:
+  noscites_paris_1:
+  noscites_lyon_1:
+
+services:
+  # ============================================================================
+  # STEP 1 ONLY : REPLICASET SIMPLE (rs0)
+  # ============================================================================
+  
+  noscites-paris:
+    image: mongo:latest
+    container_name: noscites-paris
+    ports:
+      - "27017:27017"
+    volumes:
+      - noscites_paris_1:/data/db
+      - ./mongodb-keyfile:/etc/mongodb-keyfile:ro
+    networks:
+      - noscites-network
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+    command: mongod --replSet rs0 --keyFile /etc/mongodb-keyfile --bind_ip_all
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  noscites-lyon:
+    image: mongo:latest
+    container_name: noscites-lyon
+    ports:
+      - "27018:27017"
+    volumes:
+      - noscites_lyon_1:/data/db
+      - ./mongodb-keyfile:/etc/mongodb-keyfile:ro
+    networks:
+      - noscites-network
+    command: mongod --replSet rs0 --keyFile /etc/mongodb-keyfile --bind_ip_all
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      noscites-paris:
+        condition: service_healthy
+
+  noscites-arbiter:
+    image: mongo:latest
+    container_name: noscites-arbiter
+    ports:
+      - "27019:27017"
+    networks:
+      - noscites-network
+    volumes:
+      - ./mongodb-keyfile:/etc/mongodb-keyfile:ro
+    command: mongod --replSet rs0 --keyFile /etc/mongodb-keyfile --bind_ip_all
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      noscites-lyon:
+        condition: service_healthy
+
+  # ============================================================================
+  # SERVICE D'INITIALISATION STEP 2
+  # ============================================================================
+
+  noscites-init-step2:
+    image: mongo:latest
+    container_name: noscites-init-step2
+    networks:
+      - noscites-network
+    volumes:
+      - ./scripts:/scripts
+    depends_on:
+      noscites-arbiter:
+        condition: service_healthy
+    entrypoint: >
+      sh -c '
+        echo "=== STEP 2: Initializing ReplicaSet rs0 ===";
+        sleep 5;
+        mongosh --host noscites-paris:27017 /scripts/init-replica-set.js;
+        echo "";
+        echo "=== STEP 2 Complete ===";
+        echo "ReplicaSet ready at: mongodb://localhost:27017";
+        exit 0;
+      '
