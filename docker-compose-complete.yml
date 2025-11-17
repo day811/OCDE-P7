@@ -1,4 +1,3 @@
-version: '3.8'
 
 networks:
   noscites-network:
@@ -6,293 +5,309 @@ networks:
 
 volumes:
   # SHARD 1 (Données Paris)
-  mongo__paris_1:
-  mongo_lyon_1:
+  noscites_paris_1:
+  noscites_lyon_1:
   
   # SHARD 2 (Données Lyon)
-  mongo_lyon_2:
-  mongo_paris_2:
+  noscites_lyon_2:
+  noscites_paris_2:
   
   # Config Servers
-  mongo_config_1_data:
-  mongo_config_2_data:
+  noscites_config_1:
+  noscites_config_2:
+  
 
 services:
   # ============================================================================
   # CONFIG SERVERS (2 nodes)
   # ============================================================================
 
-  mongo-config-1:
+  noscites-config-1:
     image: mongo:latest
-    container_name: mongo-config-1
+    container_name: noscites-config-1
     ports:
       - "27021:27017"
     volumes:
-      - mongo_config_1_data:/data/db
-      - ./mongodb-keyfile:/etc/mongodb-keyfile:ro
+      - noscites_config_1:/data/db
     networks:
       - noscites-network
-    command: mongod --configsvr --replSet configRS --keyFile /etc/mongodb-keyfile  --bind_ip_all
+    command: mongod --configsvr --replSet configRS --port 27017 --bind_ip_all
     healthcheck:
       test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 15
+      
 
-  mongo-config-2:
+  noscites-config-2:
     image: mongo:latest
-    container_name: mongo-config-2
+    container_name: noscites-config-2
     ports:
       - "27022:27017"
     volumes:
-      - mongo_config_2_data:/data/db
-      - ./mongodb-keyfile:/etc/mongodb-keyfile:ro
+      - noscites_config_2:/data/db
     networks:
       - noscites-network
-    command: mongod --configsvr --replSet configRS --keyFile /etc/mongodb-keyfile  --bind_ip_all
+    command: mongod --configsvr --replSet configRS --port 27017 --bind_ip_all
     healthcheck:
       test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 15
     depends_on:
-      mongo-config-1:
+      noscites-config-1:
+        condition: service_started
+
+  # ============================================================================
+  # SERVICE D'INITIALISATION - CONTROLERS
+  # ============================================================================
+
+  noscites-init-configsvr:
+    image: mongo:latest
+    container_name: noscites-init-configsvr
+    networks:
+      - noscites-network
+    depends_on:
+      noscites-config-1:
         condition: service_healthy
+      noscites-config-2:
+        condition: service_healthy
+    entrypoint: >
+      sh -c '
+      echo "=== Initializing MongoDB Sharded Cluster ===" &&
+      export MONGO_CREDS="" &&
+      echo "CREDS ; $${MONGO_CREDS}" &&
+      sleep 10 &&
+      echo "=== Step 1: Initializing Config Servers ReplicaSet ===" &&
+      mongosh --host noscites-config-1 --port 27017 $${MONGO_CREDS} --eval "
+        try {
+          var status = rs.status();
+          print(\"Config ReplicaSet already initialized.\");
+        } catch (e) {
+          print(\"Initializing Config ReplicaSet...\");
+          rs.initiate({
+            _id: \"configRS\",
+            configsvr: true,
+            members: [
+              { _id: 0, host: \"noscites-config-1:27017\" },
+              { _id: 1, host: \"noscites-config-2:27017\" }
+            ]
+          });
+        }
+      "'
 
   # ============================================================================
   # SHARD 1 (Données Paris - Primaire Paris, Secondaire Lyon)
   # ============================================================================
 
-  mongo-shard1-paris:
+  noscites-shard1-paris:
     image: mongo:latest
-    container_name: mongo-shard1-paris
+    container_name: noscites-shard1-paris
     ports:
       - "27001:27017"
     volumes:
-      - mongo__paris_1:/data/db
-      - ./mongodb-keyfile:/etc/mongodb-keyfile:ro
+      - noscites_paris_1:/data/db
+
     networks:
       - noscites-network
-    command: mongod --shardsvr --replSet shard1RS --keyFile /etc/mongodb-keyfile  --bind_ip_all
+    command: mongod --shardsvr --replSet shard1RS --port 27017 --bind_ip_all
     healthcheck:
       test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 25
+      start_period: 45s
+    depends_on:
+      noscites-init-configsvr:
+          condition: service_completed_successfully
 
-  mongo-shard1-lyon:
+  noscites-shard1-lyon:
     image: mongo:latest
-    container_name: mongo-shard1-lyon
+    container_name: noscites-shard1-lyon
     ports:
       - "27002:27017"
     volumes:
-      - mongo__lyon_1:/data/db
-      - ./mongodb-keyfile:/etc/mongodb-keyfile:ro
+      - noscites_lyon_1:/data/db
     networks:
       - noscites-network
-    command: mongod --shardsvr --replSet shard1RS --keyFile /etc/mongodb-keyfile  --bind_ip_all
+    command: mongod --shardsvr --replSet shard1RS --port 27017 --bind_ip_all
     healthcheck:
       test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 25
+      start_period: 45s
     depends_on:
-      mongo-shard1-paris:
-        condition: service_healthy
+      noscites-shard1-paris:
+        condition: service_started
 
-  mongo-shard1-arbiter:
+  noscites-shard1-arbiter:
     image: mongo:latest
-    container_name: mongo-shard1-arbiter
+    container_name: noscites-shard1-arbiter
     ports:
       - "27003:27017"
-    volumes:
-      - ./mongodb-keyfile:/etc/mongodb-keyfile:ro
     networks:
       - noscites-network
-    command: mongod --shardsvr --replSet shard1RS --arbiterOnly --keyFile /etc/mongodb-keyfile  --bind_ip_all
+    command: mongod --shardsvr --replSet shard1RS --port 27017 --bind_ip_all
     healthcheck:
       test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
       interval: 10s
       timeout: 5s
       retries: 5
     depends_on:
-      mongo-shard1-lyon:
-        condition: service_healthy
+      noscites-shard1-lyon:
+        condition: service_started
 
   # ============================================================================
   # SHARD 2 (Données Lyon - Primaire Lyon, Secondaire Paris)
   # ============================================================================
 
-  mongo-shard2-lyon:
+  noscites-shard2-lyon:
     image: mongo:latest
-    container_name: mongo-shard2-lyon
+    container_name: noscites-shard2-lyon
     ports:
       - "27011:27017"
     volumes:
-      - mongo_lyon_2:/data/db
-      - ./mongodb-keyfile:/etc/mongodb-keyfile:ro
+      - noscites_lyon_2:/data/db
     networks:
       - noscites-network
-    command: mongod --shardsvr --replSet shard2RS --keyFile /etc/mongodb-keyfile  --bind_ip_all
+    command: mongod --shardsvr --replSet shard2RS --port 27017 --bind_ip_all
     healthcheck:
       test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 25
+      start_period: 45s
+    depends_on:
+      noscites-init-configsvr:
+          condition: service_completed_successfully
 
-  mongo-shard2-paris:
+  noscites-shard2-paris:
     image: mongo:latest
-    container_name: mongo-shard2-paris
+    container_name: noscites-shard2-paris
     ports:
       - "27012:27017"
     volumes:
-      - mongo_paris_2:/data/db
-      - ./mongodb-keyfile:/etc/mongodb-keyfile:ro
+      - noscites_paris_2:/data/db
     networks:
       - noscites-network
-    command: mongod --shardsvr --replSet shard2RS --keyFile /etc/mongodb-keyfile  --bind_ip_all
+    command: mongod --shardsvr --replSet shard2RS --port 27017 --bind_ip_all
     healthcheck:
       test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 25
+      start_period: 45s
     depends_on:
-      mongo-shard2-lyon:
-        condition: service_healthy
+      noscites-shard2-lyon:
+        condition: service_started
 
-  mongo-shard2-arbiter:
+  noscites-shard2-arbiter:
     image: mongo:latest
-    container_name: mongo-shard2-arbiter
+    container_name: noscites-shard2-arbiter
     ports:
       - "27013:27017"
-    volumes:
-      - ./mongodb-keyfile:/etc/mongodb-keyfile:ro
     networks:
       - noscites-network
-    command: mongod --shardsvr --replSet shard2RS --arbiterOnly --keyFile /etc/mongodb-keyfile  --bind_ip_all
+    command: mongod --shardsvr --replSet shard2RS --port 27017 --bind_ip_all
     healthcheck:
       test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
       interval: 10s
       timeout: 5s
       retries: 5
     depends_on:
-      mongo-shard2-paris:
-        condition: service_healthy
+      noscites-shard2-paris:
+        condition: service_started
+        
+  # ============================================================================
+  # SERVICE D'INITIALISATION - SHARDS REPLICA SETS
+  # ============================================================================
 
+  noscites-init-shards:
+    image: mongo:latest
+    container_name: noscites-init-shards
+    networks:
+      - noscites-network
+    depends_on:
+      noscites-shard1-arbiter:
+        condition: service_healthy
+      noscites-shard2-arbiter:
+        condition: service_healthy
+    entrypoint: >
+        sh -c '
+        sleep 60 &&
+        echo "=== Step 2: Initializing Shard 1 ReplicaSet ===" &&
+        mongosh --host noscites-shard1-paris:27017 --eval "
+          rs.initiate({
+            _id: \"shard1RS\",
+            members: [
+              { _id: 0, host: \"noscites-shard1-paris:27017\", priority: 10 },
+              { _id: 1, host: \"noscites-shard1-lyon:27017\", priority: 5 },
+              { _id: 2, host: \"noscites-shard1-arbiter:27017\", arbiterOnly: true }
+            ]
+          });
+        " &&
+        sleep 10 &&
+        echo "=== Step 3: Initializing Shard 2 ReplicaSet ===" &&
+        mongosh --host noscites-shard2-lyon:27017 --eval "
+          rs.initiate({
+            _id: \"shard2RS\",
+            members: [
+              { _id: 0, host: \"noscites-shard2-lyon:27017\", priority: 10 },
+              { _id: 1, host: \"noscites-shard2-paris:27017\", priority: 5 },
+              { _id: 2, host: \"noscites-shard2-arbiter:27017\", arbiterOnly: true }
+            ]
+          });
+        " &&
+        exit 0;
+        '
   # ============================================================================
   # MONGOS ROUTER
   # ============================================================================
 
-  mongo-mongos:
+  noscites-router:
     image: mongo:latest
-    container_name: mongo-mongos
+    container_name: noscites-router
     ports:
       - "27020:27017"
-    volumes:
-      - ./mongodb-keyfile:/etc/mongodb-keyfile:ro
     networks:
       - noscites-network
-    command: mongos --configdb configRS/mongo-config-1:27017,mongo-config-2:27017 --keyFile /etc/mongodb-keyfile  --bind_ip_all
+    command: mongos --configdb configRS/noscites-config-1:27017,noscites-config-2:27017 --bind_ip_all
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
     depends_on:
-      mongo-config-2:
-        condition: service_healthy
-      mongo-shard1-arbiter:
-        condition: service_healthy
-      mongo-shard2-arbiter:
-        condition: service_healthy
+      noscites-init-configsvr:
+        condition: service_completed_successfully
+      noscites-init-shards:
+        condition: service_completed_successfully
 
   # ============================================================================
-  # SERVICE D'INITIALISATION
+  # SERVICE D'INITIALISATION - CLUSTER
   # ============================================================================
 
-mongo-init:
-  image: mongo:latest
-  container_name: mongo-init
-  networks:
-    - noscites-network
-  volumes:
-    - ./scripts/init-cluster.js:/scripts/init-cluster.js
-    - ./mongodb-keyfile:/etc/mongodb-keyfile:ro
-  depends_on:
-    mongo-config-2:
-      condition: service_healthy
-    mongo-shard1-arbiter:
-      condition: service_healthy
-    mongo-shard2-arbiter:
-      condition: service_healthy
-    mongo-mongos:
-      condition: service_started
-  entrypoint: >
-    sh -c '
-    echo "=== Initializing MongoDB Sharded Cluster ===" &&
-    sleep 10 &&
-    
-    echo "" &&
-    echo "=== Step 1: Initializing Config Servers ReplicaSet ===" &&
-    mongosh --host mongo-config-1:27017 --eval "
-      try {
-        var status = rs.status();
-        print(\"Config ReplicaSet already initialized.\");
-      } catch (e) {
-        print(\"Initializing Config ReplicaSet...\");
-        rs.initiate({
-          _id: \"configRS\",
-          configsvr: true,
-          members: [
-            { _id: 0, host: \"mongo-config-1:27017\" },
-            { _id: 1, host: \"mongo-config-2:27017\" }
-          ]
-        });
-      }
-    " &&
-    sleep 5 &&
-    
-    echo "" &&
-    echo "=== Step 2: Initializing Shard 1 ReplicaSet ===" &&
-    mongosh --host mongo-shard1-paris:27017 --eval "
-      try {
-        var status = rs.status();
-        print(\"Shard1 ReplicaSet already initialized.\");
-      } catch (e) {
-        print(\"Initializing Shard1 ReplicaSet...\");
-        rs.initiate({
-          _id: \"shard1RS\",
-          members: [
-            { _id: 0, host: \"mongo-shard1-paris:27017\", priority: 10 },
-            { _id: 1, host: \"mongo-shard1-lyon:27017\", priority: 5 },
-            { _id: 2, host: \"mongo-shard1-arbiter:27017\", arbiterOnly: true }
-          ]
-        });
-      }
-    " &&
-    sleep 5 &&
-    
-    echo "" &&
-    echo "=== Step 3: Initializing Shard 2 ReplicaSet ===" &&
-    mongosh --host mongo-shard2-lyon:27017 --eval "
-      try {
-        var status = rs.status();
-        print(\"Shard2 ReplicaSet already initialized.\");
-      } catch (e) {
-        print(\"Initializing Shard2 ReplicaSet...\");
-        rs.initiate({
-          _id: \"shard2RS\",
-          members: [
-            { _id: 0, host: \"mongo-shard2-lyon:27017\", priority: 10 },
-            { _id: 1, host: \"mongo-shard2-paris:27017\", priority: 5 },
-            { _id: 2, host: \"mongo-shard2-arbiter:27017\", arbiterOnly: true }
-          ]
-        });
-      }
-    " &&
-    sleep 10 &&
-    
-    echo "" &&
-    echo "=== Step 4: Adding Shards to Cluster ===" &&
-    mongosh --host mongo-mongos:27017 /scripts/init-cluster.js &&
-    
-    echo "" &&
-    echo "=== Cluster Initialization Complete ===" &&
-    echo "Connect via: mongodb://localhost:27020" &&
-    exit 0;
-    '
+  noscites-init-router:
+    image: mongo:latest
+    container_name: noscites-init-router
+    networks:
+      - noscites-network
+    volumes:
+      - ./scripts/init-cluster.js:/scripts/init-cluster.js
+    depends_on:
+      noscites-router:
+        condition: service_healthy
+    entrypoint: >
+      sh -c '
+      sleep 240 &&
+      
+      echo "" &&
+      echo "=== Step 4: Adding Shards to Cluster ===" &&
+      mongosh --host noscites-router:27017 /scripts/init-cluster.js &&
+      
+      echo "" &&
+      echo "=== Cluster Initialization Complete ===" &&
+      echo "Connect via: mongodb://localhost:27020" &&
+      exit 0;
+      '

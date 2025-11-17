@@ -4,8 +4,8 @@ networks:
     driver: bridge
 
 volumes:
-  noscites_paris_1:
-  noscites_lyon_1:
+  noscites_paris:
+  noscites_lyon:
 
 services:
   # ============================================================================
@@ -18,7 +18,7 @@ services:
     ports:
       - "27017:27017"
     volumes:
-      - noscites_paris_1:/data/db
+      - noscites_paris:/data/db
       - ./mongodb-keyfile:/etc/mongodb-keyfile:ro
     networks:
       - noscites-network
@@ -38,7 +38,7 @@ services:
     ports:
       - "27018:27017"
     volumes:
-      - noscites_lyon_1:/data/db
+      - noscites_lyon:/data/db
       - ./mongodb-keyfile:/etc/mongodb-keyfile:ro
     networks:
       - noscites-network

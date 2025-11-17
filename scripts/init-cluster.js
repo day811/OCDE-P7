@@ -15,11 +15,18 @@ function shardExists(shardName) {
   }
   return false;
 }
+print("Lowering majority to enable shards...");
+db.adminCommand({
+  setDefaultRWConcern: 1,
+  defaultWriteConcern: { w: 1 }
+});
+
+sleep(6000);  // PAUSE: attendre que la config soit appliquée
 
 // Add Shard 1 (Paris primary, Lyon secondary)
 if (!shardExists("shard1RS")) {
   print("Adding Shard 1 (Paris Data)...");
-  sh.addShard("shard1RS/mongo-shard1-paris:27017,mongo-shard1-lyon:27017,mongo-shard1-arbiter:27017");
+  sh.addShard("shard1RS/noscites-shard1-paris:27017,noscites-shard1-lyon:27017,noscites-shard1-arbiter:27017");
   print("Shard 1 added successfully.");
 } else {
   print("Shard 1 already exists. Skipping.");
@@ -28,7 +35,7 @@ if (!shardExists("shard1RS")) {
 // Add Shard 2 (Lyon primary, Paris secondary)
 if (!shardExists("shard2RS")) {
   print("Adding Shard 2 (Lyon Data)...");
-  sh.addShard("shard2RS/mongo-shard2-lyon:27017,mongo-shard2-paris:27017,mongo-shard2-arbiter:27017");
+  sh.addShard("shard2RS/noscites-shard2-lyon:27017,noscites-shard2-paris:27017,noscites-shard2-arbiter:27017");
   print("Shard 2 added successfully.");
 } else {
   print("Shard 2 already exists. Skipping.");

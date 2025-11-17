@@ -2,4 +2,4 @@
 
 export $(grep -v '^#' .env | xargs)
 
-docker-compose -f docker-compose-replica-set.yml up -d 
+docker-compose -f docker-compose-replica-set.yml up -d --remove-orphans
