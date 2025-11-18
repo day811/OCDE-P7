@@ -22,9 +22,9 @@ services:
   # CONFIG SERVERS (2 nodes)
   # ============================================================================
 
-  noscites-config-1:
+  noscites-config-paris:
     image: mongo:latest
-    container_name: noscites-config-1
+    container_name: noscites-config-paris
     ports:
       - "27021:27017"
     volumes:
@@ -39,9 +39,9 @@ services:
       retries: 15
       
 
-  noscites-config-2:
+  noscites-config-lyon:
     image: mongo:latest
-    container_name: noscites-config-2
+    container_name: noscites-config-lyon
     ports:
       - "27022:27017"
     volumes:
@@ -55,7 +55,7 @@ services:
       timeout: 5s
       retries: 15
     depends_on:
-      noscites-config-1:
+      noscites-config-paris:
         condition: service_started
 
   # ============================================================================
@@ -68,9 +68,9 @@ services:
     networks:
       - noscites-network
     depends_on:
-      noscites-config-1:
+      noscites-config-paris:
         condition: service_healthy
-      noscites-config-2:
+      noscites-config-lyon:
         condition: service_healthy
     entrypoint: >
       sh -c '
@@ -79,7 +79,7 @@ services:
       echo "CREDS ; $${MONGO_CREDS}" &&
       sleep 10 &&
       echo "=== Step 1: Initializing Config Servers ReplicaSet ===" &&
-      mongosh --host noscites-config-1 --port 27017 $${MONGO_CREDS} --eval "
+      mongosh --host noscites-config-paris --port 27017 $${MONGO_CREDS} --eval "
         try {
           var status = rs.status();
           print(\"Config ReplicaSet already initialized.\");
@@ -89,8 +89,8 @@ services:
             _id: \"configRS\",
             configsvr: true,
             members: [
-              { _id: 0, host: \"noscites-config-1:27017\" },
-              { _id: 1, host: \"noscites-config-2:27017\" }
+              { _id: 0, host: \"noscites-config-paris:27017\" },
+              { _id: 1, host: \"noscites-config-lyon:27017\" }
             ]
           });
         }
@@ -262,17 +262,17 @@ services:
         exit 0;
         '
   # ============================================================================
-  # MONGOS ROUTER
+  # MONGOS ROUTERS
   # ============================================================================
 
-  noscites-router:
+  noscites-router-paris:
     image: mongo:latest
-    container_name: noscites-router
+    container_name: noscites-router-paris
     ports:
-      - "27020:27017"
+      - "27018:27017"
     networks:
       - noscites-network
-    command: mongos --configdb configRS/noscites-config-1:27017,noscites-config-2:27017 --bind_ip_all
+    command: mongos --configdb configRS/noscites-config-paris:27017,noscites-config-lyon:27017 --bind_ip_all
     healthcheck:
       test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
       interval: 10s
@@ -283,6 +283,23 @@ services:
         condition: service_completed_successfully
       noscites-init-shards:
         condition: service_completed_successfully
+
+  noscites-router-lyon:
+    container_name: noscites-router-lyon
+    image: mongo:latest
+    ports:
+      - "27019:27017"
+    command: mongos --configdb configRS/noscites-config-paris:27017,noscites-config-lyon:27017 --bind_ip_all
+    networks:
+      - noscites-network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      noscites-router-paris : 
+        condition: service_started
 
   # ============================================================================
   # SERVICE D'INITIALISATION - CLUSTER
@@ -296,7 +313,9 @@ services:
     volumes:
       - ./scripts/init-cluster.js:/scripts/init-cluster.js
     depends_on:
-      noscites-router:
+      noscites-router-paris:
+        condition: service_healthy
+      noscites-router-lyon:
         condition: service_healthy
     entrypoint: >
       sh -c '
@@ -304,10 +323,10 @@ services:
       
       echo "" &&
       echo "=== Step 4: Adding Shards to Cluster ===" &&
-      mongosh --host noscites-router:27017 /scripts/init-cluster.js &&
+      mongosh --host noscites-router-paris:27017 /scripts/init-cluster.js &&
       
       echo "" &&
       echo "=== Cluster Initialization Complete ===" &&
-      echo "Connect via: mongodb://localhost:27020" &&
+      echo "Connect via: mongodb://localhost:27018" &&
       exit 0;
       '
