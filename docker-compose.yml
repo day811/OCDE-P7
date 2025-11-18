@@ -2,7 +2,7 @@
 services:
   mongo:
     image: mongo:latest
-    container_name: nc
+    container_name: noscites-solo
     networks:
       - noscites-net
     ports:
